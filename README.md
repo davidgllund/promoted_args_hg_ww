@@ -1,5 +1,5 @@
 ### Introduction
-... 
+This repository contains scripts used to analyze the resistomes associated with the human gut and wastewater microbiomes.
 
 ### Dependencies
 To run the scripts in this repository, the following software is required:
