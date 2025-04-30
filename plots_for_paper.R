@@ -8,6 +8,8 @@ library(scales)
 library(igraph)
 library(GGally)
 library(ggpp)
+library(tidyr)
+library(tibble)
 
 aggregate_mechanism <- function(classes) {
   mechanism <- rep(NA, times = length(classes))
@@ -25,7 +27,7 @@ aggregate_mechanism <- function(classes) {
   return(mechanism)
 }
 
-metadata <- data.frame(fread("arg_metadata_updated.tsv", header=TRUE)) %>% 
+metadata <- data.frame(fread("arg_metadata.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 
 metadata[is.na(metadata)] <- 0
@@ -35,8 +37,7 @@ metadata["taxonomy_score", metadata["taxonomy_score",] == "4"] <- "Order"
 metadata["taxonomy_score", metadata["taxonomy_score",] == "5"] <- "Class"
 metadata["taxonomy_score", metadata["taxonomy_score",] == "6"] <- "Phylum"
 
-
-data_ww <- data.frame(fread("rarefied_counts_wastewater_updated.tsv", header=TRUE)) %>% 
+data_ww <- data.frame(fread("rarefied_counts_wastewater.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 data_ww <- data_ww[,metadata["arg_class",] != "mcr"]
 
@@ -51,9 +52,6 @@ gene_class <- unique(sort(as.character(metadata["arg_class",])))
 rel_ab_hm <- colSums(data_hm >= 3)/nrow(data_hm)
 rel_ab_ww <- colSums(data_ww >= 3)/nrow(data_ww)
 
-mean_ab_hm <- colSums(data_hm)/nrow(data_hm)
-mean_ab_ww <- colSums(data_ww)/nrow(data_ww)
-
 cut_off <- 0.05
 
 hg_prom <- colnames(data_hm)[rel_ab_hm >= cut_off & rel_ab_ww < cut_off]
@@ -64,10 +62,10 @@ missing <- colnames(data_hm)[rel_ab_hm == 0 & rel_ab_ww == 0]
 
 # Define color palettes
 arg_category_palette <- c(
-  "Co-promoted"='#c26a77',
-  "HG-promoted" ="#337538",
-  "WW-promoted" = "#2e2585",
-  "Non-promoted"="#dccd7d"
+  "Co-promoted"='#000000',
+  "HG-promoted" ="#D55E00",
+  "WW-promoted" = "#0072B2",
+  "Non-promoted"="#F0E442"
 )
 
 mechanism_pallete <- c(
@@ -83,12 +81,12 @@ mechanism_pallete <- c(
 )
 
 phylum_palette <- c(
-  "Actinomycetota"='#337538',
-  "Bacillota" ="#2e2585",
-  "Bacteroidota" = "#dccd7d",
-  "Campylobacterota"="#94caec",
-  "Pseudomonadota"="#c26a77",
-  "Other" = "#dddddd"
+  "Actinomycetota"='#6A4C93',
+  "Bacillota" ="#457B9D",
+  "Bacteroidota" = "#F4A261",
+  "Campylobacterota"="#A8DADC",
+  "Pseudomonadota"="#E63946",
+  "Other" = "#2A2A2A"
 )
 
 #----------------- FIGURE 1 ---------------------------------------------------
@@ -268,6 +266,65 @@ dev.off()
 
 #----------------- FIGURE 3a-b ------------------------------------------------
 
+perform_permutation <- function(df, n_iter, n_subsample) {
+  # Pre-allocate list to collect results
+  results_list <- vector("list", length = n_iter * length(unique(df$taxonomy_score)))
+  
+  pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
+  taxonomy_scores <- unique(df$taxonomy_score)
+  group_levels <- c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")
+  
+  result_idx <- 1
+  
+  for (i in seq_len(n_iter)) {
+    df$grp <- sample(df$grp)  # scramble groups once per iteration
+    
+    for (score in taxonomy_scores) {
+      tmp_mat <- matrix(0, nrow = n_iter, ncol = 4)  # preallocate temporary results
+      
+      for (j in seq_len(n_iter)) {
+        # Sample once per group
+        subsample_indices <- unlist(
+          lapply(group_levels, function(g) {
+            sample(which(df$grp == g), n_subsample, replace = FALSE)
+          })
+        )
+        subsample <- df[subsample_indices, ]
+        
+        n_args <- sum(subsample$taxonomy_score == score)
+        
+        if (n_args == 0) {
+          next
+        }
+        
+        # Calculate fraction of each group matching score
+        group_counts <- sapply(group_levels, function(g) {
+          sum(subsample$taxonomy_score[subsample$grp == g] == score)
+        })
+        
+        tmp_mat[j, ] <- group_counts / n_args
+      }
+      
+      # Take column means and store result
+      tmp_means <- colMeans(tmp_mat, na.rm = TRUE)
+      results_list[[result_idx]] <- c(tmp_means, score)
+      result_idx <- result_idx + 1
+    }
+    
+    setTxtProgressBar(pb, i)
+  }
+  
+  close(pb)
+  
+  # Combine list into data.frame
+  output <- do.call(rbind, results_list)
+  colnames(output) <- c("co_prom", "hg_prom", "ww_prom", "non_prom", "score")
+  
+  output <- as.data.frame(output)
+  return(output)
+}
+
+
 plot_tax_score <- function(metadata, status, n_iter, tag) {
   co_prom_metadata <- metadata[,co_prom] %>% select(which(.["category", ] == status))
   hg_prom_metadata <- metadata[,hg_prom] %>% select(which(.["category", ] == status))
@@ -283,6 +340,8 @@ plot_tax_score <- function(metadata, status, n_iter, tag) {
                             value = NA)
     
     status_metadata <- metadata[,c(co_prom, hg_prom, ww_prom, non_prom)] %>% select(which(.["category", ] == status))
+    
+    n_subsample <- min(ncol(co_prom_metadata), ncol(hg_prom_metadata), ncol(ww_prom_metadata), ncol(non_prom_metadata))
   }
   
   else if (status == "Latent") {
@@ -293,16 +352,11 @@ plot_tax_score <- function(metadata, status, n_iter, tag) {
                             value = NA)
     
     status_metadata <- metadata[,c(hg_prom, ww_prom, non_prom)] %>% select(which(.["category", ] == status))
+    
+    n_subsample <- min(ncol(hg_prom_metadata), ncol(ww_prom_metadata), ncol(non_prom_metadata))
   }
   
   for (score in unique(plot_data$taxonomy_score)) {
-    if (status == "Established") {
-      n_subsample <- min(ncol(co_prom_metadata), ncol(hg_prom_metadata), ncol(ww_prom_metadata), ncol(non_prom_metadata))
-    }
-    else if (status == "Latent") {
-      n_subsample <- min(ncol(hg_prom_metadata), ncol(ww_prom_metadata), ncol(non_prom_metadata))
-    }
-    
     prop_co_prom <- c()
     prop_hg_prom <- c()
     prop_ww_prom <- c()
@@ -367,7 +421,7 @@ plot_tax_score <- function(metadata, status, n_iter, tag) {
     scale_y_continuous(labels = percent, limits = c(0,1)) +
     scale_fill_manual(
       values = setNames(
-        c("#c26a77", "#337538", "#2e2585", "#dccd7d"),
+        c("#000000", "#D55E00", "#0072B2", "#F0E442"),
         c(paste(c("Co-promoted (n=", ncol(co_prom_metadata), ")"), collapse = ""),
           paste(c("HG-promoted (n=", ncol(hg_prom_metadata), ")"), collapse = ""),
           paste(c("WW-promoted (n=", ncol(ww_prom_metadata), ")"), collapse = ""),
@@ -386,9 +440,30 @@ plot_tax_score <- function(metadata, status, n_iter, tag) {
                                b = 10,
                                l = 40))
   
+  if (status == "Established") {
+    print("Performing permutation test")
+    permutation_df <- cbind(co_prom_metadata, 
+                            hg_prom_metadata, 
+                            ww_prom_metadata, 
+                            non_prom_metadata) %>% 
+      t() %>% 
+      as.data.frame()
+    
+    permutation_df$grp <- c(rep("Co-promoted", ncol(co_prom_metadata)), 
+                            rep("HG-promoted", ncol(hg_prom_metadata)), 
+                            rep("WW-promoted", ncol(ww_prom_metadata)), 
+                            rep("Non-promoted", ncol(non_prom_metadata)))
+    
+    permutation_results <- perform_permutation(permutation_df, n_iter, n_subsample)
+    
+    p_val_co_prom_phylum <- sum(as.numeric(permutation_results$co_prom[permutation_results$score == "Phylum"]) > plot_data$value[plot_data$category == paste(c("Co-promoted (n=", ncol(co_prom_metadata), ")"), collapse = "") & plot_data$taxonomy_score == "Phylum"]) / (n_iter+1)
+    p_val_ww_prom_class <- sum(as.numeric(permutation_results$ww_prom[permutation_results$score == "Class"]) > plot_data$value[plot_data$category == paste(c("WW-promoted (n=", ncol(ww_prom_metadata), ")"), collapse = "") & plot_data$taxonomy_score == "Class"]) / (n_iter+1)
+    
+    print(paste(c("Co-promoted phylum-level permutation p-value:", p_val_co_prom_phylum), collapse = " "))
+    print(paste(c("WW-promoted phylum-level permutation p-value:", p_val_ww_prom_class), collapse = " "))
+  }
   return(p)
 }
-
 
 fig_3a <- plot_tax_score(metadata, "Established", 1000, "a")
 fig_3b <- plot_tax_score(metadata, "Latent", 1000, "b")
@@ -475,7 +550,118 @@ pdf("figure_3.pdf", height = 14, width = 14)
   (fig_3e | fig_3f)
 dev.off()
 
-#----------------- FIGURE 4a-b ------------------------------------------------
+#----------------- FIGURE 4 ---------------------------------------------------
+
+read_mges <- function(filename, gene_ids, metadata, mge_type, arg_type, status) {
+  df <- data.frame(fread(filename)) %>% 
+    tibble::column_to_rownames('V1') %>%
+    select(subset = -ncol(.)) 
+  
+  metadata_subset <- metadata[,gene_ids]
+  df_subset <- df[,metadata_subset["category",] == status]
+  
+  output <- data.frame(prop = rowSums(df_subset[mge_type$subset != "arg",]) / ncol(df_subset), type = mge_type$subset[mge_type$subset != "arg"])
+  
+  args <- df_subset[mge_type$subset == "arg",]
+  arg_summary <- data.frame(prop = rep(NA, 6), type = rep("arg", 6), row.names=unique(arg_type$V2))
+  
+  for (i in 1:nrow(arg_summary)) {
+    arg_summary$prop[i] <- sum(colSums(df_subset[arg_type$V1[arg_type$V2 == rownames(arg_summary)[i]],]) > 0) / ncol(df_subset)
+  }
+  
+  output <- rbind(output, arg_summary) %>% 
+    filter(.$type != "is")
+  
+  output$status <- status
+  output$n <- ncol(df_subset)
+  
+  return(output)
+}
+
+mge_type <- data.frame(fread("co_prom_mges.tsv")) %>% 
+  tibble::column_to_rownames('V1') %>%
+  select(subset = ncol(.))
+
+arg_type <- data.frame(fread("arg_types.tsv", header=FALSE))
+
+est_co_prom_mge <- read_mges("co_prom_mges.tsv", co_prom, metadata, mge_type, arg_type, "Established")
+est_hg_prom_mge <- read_mges("hg_prom_mges.tsv", hg_prom, metadata, mge_type, arg_type, "Established")
+est_ww_prom_mge <- read_mges("ww_prom_mges.tsv", ww_prom, metadata, mge_type, arg_type, "Established")
+est_non_prom_mge <- read_mges("non_prom_mges.tsv", non_prom, metadata, mge_type, arg_type, "Established")
+
+mge_type <- mge_type[mge_type$subset != "is",]
+
+plot_data <- data.frame(element=rep(rownames(est_co_prom_mge),4),
+                        type=rep(est_co_prom_mge$type,4),
+                        value=c(est_co_prom_mge$prop, 
+                                est_hg_prom_mge$prop, 
+                                est_ww_prom_mge$prop, 
+                                est_non_prom_mge$prop),
+                        category=c(rep("Co-promoted", length(est_co_prom_mge$prop)),
+                                   rep("HG-promoted", length(est_co_prom_mge$prop)), 
+                                   rep("WW-promoted", length(est_co_prom_mge$prop)),
+                                   rep("Non-promoted", length(est_co_prom_mge$prop))),
+                        status=c(est_co_prom_mge$status, 
+                                 est_hg_prom_mge$status, 
+                                 est_ww_prom_mge$status, 
+                                 est_non_prom_mge$status),
+                        n=c(est_co_prom_mge$n, 
+                            est_hg_prom_mge$n, 
+                            est_ww_prom_mge$n, 
+                            est_non_prom_mge$n)) %>%
+  filter(type == "mpf")
+
+plot_data$category <- paste0(plot_data$category, "\n(n=", plot_data$n, ")")
+
+fig_4 <- ggplot(
+  plot_data, 
+  aes(
+    y=value, 
+    x=factor(category, levels=c("Non-promoted\n(n=229)", "WW-promoted\n(n=20)", "HG-promoted\n(n=42)", "Co-promoted\n(n=41)")), 
+    fill=factor(element, levels = rev(unique(element))))
+) + 
+  geom_bar(position="dodge", stat="identity")  +
+  theme_minimal() +
+  ylab("Proportion")  +
+  xlab(NULL) +
+  scale_y_continuous(labels = percent, limits = c(0,1)) +
+  scale_fill_manual(
+    values=c(
+      "B"='#337538',
+      "F" ="#dccd7d",
+      "FA" = "#2e2585",
+      "FATA"="#94caec",
+      "G" = "#dddddd",
+      "I"="#c26a77",
+      "T" = "#9f4a96"
+    ), 
+    name = "MPF type",
+    breaks = unique(plot_data$element)
+  ) +
+  theme(
+    axis.text.x=element_text(size = rel(1.3), angle = 0, vjust = 1, hjust = 1),
+    axis.text.y=element_text(size = rel(1.3)),
+    axis.title=element_text(size=rel(1.3)),
+    legend.title=element_text(size=rel(1.2)), 
+    legend.text=element_text(size=rel(1)),
+    plot.tag = element_text(size=rel(2.5), face = "bold"),
+    plot.title = element_text(size = rel(1.5))
+  ) +
+  coord_flip()
+
+pdf("figure_4.pdf", height = 5, width = 7)
+plot(fig_4)
+dev.off()
+
+plot_data$value <- plot_data$value*plot_data$n
+plot_data$category <- gsub("\\\n.*", "", plot_data$category)
+
+contingency <- plot_data %>%
+  select(element, category, value) %>%
+  pivot_wider(names_from = category, values_from = value, values_fill = 0) %>%
+  column_to_rownames("element")
+
+#----------------- FIGURE 5a-b ------------------------------------------------
 
 plot_n_pathogens <- function(metadata, status, n_iter, tag) {
   co_prom_metadata <- metadata[,co_prom] %>% select(which(.["category", ] == status))
@@ -491,6 +677,7 @@ plot_n_pathogens <- function(metadata, status, n_iter, tag) {
                                          rep(paste(c("Non-promoted (n=", ncol(non_prom_metadata), ")"), collapse = ""), max(as.numeric(metadata["n_pathogens", metadata["category",] == status]))+1)),
                             value = NA)
   }
+  
   else if (status == "Latent") {
     plot_data <- data.frame(n_pathogens = rep(0:max(as.numeric(metadata["n_pathogens", metadata["category",] == status])), 3),
                             category = c(rep(paste(c("HG-promoted (n=", ncol(hg_prom_metadata), ")"), collapse = ""), max(as.numeric(metadata["n_pathogens", metadata["category",] == status]))+1), 
@@ -560,6 +747,7 @@ plot_n_pathogens <- function(metadata, status, n_iter, tag) {
     paste0("WW-promoted (n=", ncol(ww_prom_metadata), ")"),
     paste0("Non-promoted (n=", ncol(non_prom_metadata), ")")
   )
+  
   p <- ggplot(data=plot_data, aes(x = n_pathogens, y = value, color = factor(category, levels =  levels_labels))) +
     geom_line(linewidth=1) +
     theme_minimal() +
@@ -571,7 +759,7 @@ plot_n_pathogens <- function(metadata, status, n_iter, tag) {
     labs(tag = tag) +
     scale_color_manual(
       values = setNames(
-        c("#c26a77", "#337538", "#2e2585", "#dccd7d"),
+        c("#000000", "#D55E00", "#0072B2", "#F0E442"),
         levels_labels
       ),
       name = ""
@@ -587,10 +775,10 @@ plot_n_pathogens <- function(metadata, status, n_iter, tag) {
   return(p)
 }
 
-fig_4a <- plot_n_pathogens(metadata, "Established", 1000, "a")
-fig_4b <- plot_n_pathogens(metadata, "Latent", 1000, "b")
+fig_5a <- plot_n_pathogens(metadata, "Established", 1000, "a")
+fig_5b <- plot_n_pathogens(metadata, "Latent", 1000, "b")
 
-#----------------- FIGURE 4c-f ------------------------------------------------
+#----------------- FIGURE 5c-f ------------------------------------------------
 
 pathogen_data <- data.frame(fread("arg_pathogen_distr.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
@@ -635,18 +823,18 @@ plot_pathogens <- function(gene_ids, pathogen_data, metadata, taxonomy, title, t
   return(p)
 }
 
-fig_4c <- plot_pathogens(co_prom, pathogen_data, metadata, taxonomy, "Co-promoted", "c")
-fig_4d <- plot_pathogens(hg_prom, pathogen_data, metadata, taxonomy, "HG-promoted", "d")
-fig_4e <- plot_pathogens(ww_prom, pathogen_data, metadata, taxonomy, "WW-promoted", "e")
-fig_4f <- plot_pathogens(non_prom, pathogen_data, metadata, taxonomy, "Non-promoted", "f")
+fig_5c <- plot_pathogens(co_prom, pathogen_data, metadata, taxonomy, "Co-promoted", "c")
+fig_5d <- plot_pathogens(hg_prom, pathogen_data, metadata, taxonomy, "HG-promoted", "d")
+fig_5e <- plot_pathogens(ww_prom, pathogen_data, metadata, taxonomy, "WW-promoted", "e")
+fig_5f <- plot_pathogens(non_prom, pathogen_data, metadata, taxonomy, "Non-promoted", "f")
 
-pdf("figure_4.pdf", height = 15, width = 16)
-(fig_4a | fig_4b) /
-  (fig_4c | fig_4d) /
-  (fig_4e | fig_4f)
+pdf("figure_5.pdf", height = 15, width = 16)
+(fig_5a | fig_5b) /
+  (fig_5c | fig_5d) /
+  (fig_5e | fig_5f)
 dev.off()
 
-#----------------- FIGURE 5a-b ------------------------------------------------
+#----------------- FIGURE 6 ---------------------------------------------------
 
 read_genetic_compatibility <- function(filename, status, category) {
   df <- data.frame(fread(filename)) %>% 
@@ -699,14 +887,14 @@ df_non_prom <- compile_pathogen_comp("gcomp_non_prom.tsv", non_prom, pathogen_da
 
 plot_data <- rbind(df_co_prom, df_hg_prom, df_ww_prom, df_non_prom)
 
-fig_5b <- ggplot(data=plot_data, aes(x=median_distance, y = prop, color=factor(Category, levels = c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")))) +
+fig_6b <- ggplot(data=plot_data, aes(x=median_distance, y = prop, color=factor(Category, levels = c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")))) +
   annotate("segment", x=min(plot_data$median_distance)*0.95, xend=max(plot_data$median_distance)*1.05, y=min(plot_data$prop), yend=min(plot_data$prop),
            arrow=arrow(length=unit(0.3, "cm"), type="closed")) + 
   annotate("segment", x=min(plot_data$median_distance)*0.95, xend=min(plot_data$median_distance)*0.95, y=min(plot_data$prop), yend=max(plot_data$prop)*1.05,
           arrow=arrow(length=unit(0.3, "cm"), type="closed")) +
   geom_point(size=3) +
-  ylab("Promotion") +
-  xlab("Genetic incompatibility\n(distance between 5mer distributions)") +
+  ylab("Prevalence in pathogen") +
+  xlab("Genetic incompatibility with pathogen\n(distance between 5mer distributions)") +
   theme_minimal() +
   labs(tag="b") +
   scale_y_continuous(labels = percent) +
@@ -719,23 +907,14 @@ fig_5b <- ggplot(data=plot_data, aes(x=median_distance, y = prop, color=factor(C
         plot.tag = element_text(size=rel(2.5), face = "bold"),
         plot.title = element_text(size = rel(1.5))) 
 
-plot_data_a <- data.frame(category = unique(plot_data$Category), genetic_incompatibility = NA, std_dev = NA)
-
-for (i in 1:nrow(plot_data_a)) {
-  plot_data_a$genetic_incompatibility[i] <- mean(plot_data$median_distance[plot_data$Category == plot_data_a$category[i]])
-  plot_data_a$std_dev[i] <- sd(plot_data$median_distance[plot_data$Category == plot_data_a$category[i]])
-}
-
-fig_5a <- ggplot(plot_data_a, aes(x = factor(category, levels = c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")), 
-                                  y = genetic_incompatibility, 
-                                  fill = factor(category, levels = c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")))) +
-  geom_bar(position = "dodge", stat = "identity") +
-  geom_errorbar(aes(ymin=genetic_incompatibility-std_dev, ymax=genetic_incompatibility+std_dev), width=.3, position=position_dodge(.9)) +
+fig_6a <- ggplot(plot_data, aes(x = factor(Category, levels = c("Co-promoted", "WW-promoted", "HG-promoted", "Non-promoted")),
+                                y = median_distance,
+                                fill = factor(Category, levels = c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")))) +
+  geom_boxplot() +
   scale_fill_manual(values = arg_category_palette,
                     name = "", guide="none") +
   theme_minimal() +
   labs(x = "", y = "Genetic incompatibility\n(distance between 5mer distributions)", tag = "a") +
-  coord_cartesian(ylim = c(0.025, 0.05)) +
   theme(axis.text.x=element_text(size = rel(1.3)),
         axis.text.y=element_text(size = rel(1.3)),
         axis.title=element_text(size=rel(1.3)),
@@ -744,8 +923,8 @@ fig_5a <- ggplot(plot_data_a, aes(x = factor(category, levels = c("Co-promoted",
         plot.tag = element_text(size=rel(2.5), face = "bold"),
         plot.title = element_text(size = rel(1.5)))
 
-pdf("figure_5.pdf", height = 6, width = 14)
-(fig_5a | fig_5b) 
+pdf("figure_6.pdf", height = 6, width = 14)
+(fig_6a | fig_6b) 
 dev.off()
 
 #----------------- FIGURE S1a-b -----------------------------------------------
@@ -1020,6 +1199,49 @@ read_mges <- function(filename, gene_ids, metadata, mge_type, arg_type, status) 
   return(output)
 }
 
+do_fisher_test <- function(df) {
+  df$category <- gsub("\\\n.*", "", df$category)
+  
+  contingency <- df %>%
+    select(element, category, value) %>%
+    pivot_wider(names_from = category, values_from = value, values_fill = 0) %>%
+    column_to_rownames("element")
+  
+  categories <- colnames(contingency)
+  
+  # Safe pairwise Fisher test with proper error handling
+  pairwise_results <- combn(categories, 2, function(pair) {
+    sub_table <- contingency[, pair, drop = FALSE]
+    sub_table <- sub_table[rowSums(sub_table) > 0, , drop = FALSE]
+    
+    # Must be at least 2 rows and 2 columns
+    if (nrow(sub_table) < 2 || ncol(sub_table) != 2) {
+      return(data.frame(cat1 = pair[1], cat2 = pair[2], p_value = NA, method = "skipped"))
+    }
+    
+    mat <- as.matrix(sub_table)
+    if (any(is.na(mat)) || any(mat < 0)) {
+      return(data.frame(cat1 = pair[1], cat2 = pair[2], p_value = NA, method = "invalid"))
+    }
+    
+    # Try Fisher test
+    test <- tryCatch({
+      fisher.test(mat)
+    }, error = function(e) {
+      return(NULL)
+    })
+    
+    if (!is.null(test)) {
+      data.frame(cat1 = pair[1], cat2 = pair[2], p_value = test$p.value, method = test$method)
+    } else {
+      data.frame(cat1 = pair[1], cat2 = pair[2], p_value = NA, method = "error")
+    }
+  }, simplify = FALSE)
+  
+  results_df <- do.call(rbind, pairwise_results)
+  print(results_df)
+}
+
 mge_type <- data.frame(fread("co_prom_mges.tsv")) %>% 
   tibble::column_to_rownames('V1') %>%
   select(subset = ncol(.))
@@ -1113,6 +1335,10 @@ fig_a <- ggplot(
   ) +
   coord_flip()
 
+print("Established MPF")
+plot_data_subset$value <- plot_data_subset$value*plot_data_subset$n
+do_fisher_test(plot_data_subset)
+
 #----------------- FIGURE S4b -------------------------------------------------
 
 plot_data_subset <- plot_data[plot_data$type == "mpf" & plot_data$status == "Latent",]
@@ -1154,6 +1380,10 @@ fig_b <- ggplot(
     plot.title = element_text(size = rel(1.5))
   ) +
   coord_flip()
+
+print("Latent MPF")
+plot_data_subset$value <- plot_data_subset$value*plot_data_subset$n
+do_fisher_test(plot_data_subset)
 
 #----------------- FIGURE S4c -------------------------------------------------
 
@@ -1197,6 +1427,10 @@ fig_c <- ggplot(
   ) +
   coord_flip()
 
+print("Established MOB")
+plot_data_subset$value <- plot_data_subset$value*plot_data_subset$n
+do_fisher_test(plot_data_subset)
+
 #----------------- FIGURE S4d -------------------------------------------------
 
 plot_data_subset <- plot_data[plot_data$type == "mob" & plot_data$status == "Latent",]
@@ -1238,6 +1472,10 @@ fig_d <- ggplot(
     plot.title = element_text(size = rel(1.5))
   ) +
   coord_flip()
+
+print("Latent MOB")
+plot_data_subset$value <- plot_data_subset$value*plot_data_subset$n
+do_fisher_test(plot_data_subset)
 
 #----------------- FIGURE S4e -------------------------------------------------
 
@@ -1284,6 +1522,10 @@ fig_e <- ggplot(
   ) +
   coord_flip()
 
+print("Established co-localized ARGs")
+plot_data_subset$value <- plot_data_subset$value*plot_data_subset$n
+do_fisher_test(plot_data_subset)
+
 #----------------- FIGURE S4f -------------------------------------------------
 
 plot_data_subset <- plot_data[plot_data$type == "arg" & plot_data$status == "Latent",]
@@ -1329,11 +1571,176 @@ fig_f <- ggplot(
   ) +
   coord_flip()
 
+print("Latent co-localized ARGs")
+plot_data_subset$value <- plot_data_subset$value*plot_data_subset$n
+do_fisher_test(plot_data_subset)
 
 pdf("figure_s4.pdf", height = 14, width = 14)
 (fig_a | fig_b) /
   (fig_c | fig_d) /
   (fig_e | fig_f)
+dev.off()
+
+#----------------- FIGURE S5 --------------------------------------------------
+
+perform_permutation <- function(df, n_iter, n_subsample) {
+  # Pre-allocate list to collect results
+  results_list <- vector("list", length = n_iter * length(unique(df$n_pathogens)))
+  df$n_pathogens <- as.numeric(df$n_pathogens)
+  
+  pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
+  n_pathogens <- sort(unique(df$n_pathogens))
+  group_levels <- c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")
+  
+  result_idx <- 1
+  
+  for (i in seq_len(n_iter)) {
+    df$grp <- sample(df$grp)  # scramble groups once per iteration
+    
+    for (n in n_pathogens) {
+      tmp_mat <- matrix(0, nrow = n_iter, ncol = 4)  # preallocate temporary results
+      
+      for (j in seq_len(n_iter)) {
+        # Sample once per group
+        subsample_indices <- unlist(
+          lapply(group_levels, function(g) {
+            sample(which(df$grp == g), n_subsample, replace = FALSE)
+          })
+        )
+        subsample <- df[subsample_indices, ]
+        
+        n_args <- sum(subsample$n_pathogens >= n)
+        
+        if (n_args == 0) {
+          next
+        }
+        
+        # Calculate fraction of each group matching score
+        group_counts <- sapply(group_levels, function(g) {
+          sum(subsample$n_pathogens[subsample$grp == g] >= n)
+        })
+        
+        tmp_mat[j, ] <- group_counts / n_args
+      }
+      
+      # Take column means and store result
+      tmp_means <- colMeans(tmp_mat, na.rm = TRUE)
+      tmp_comb <- data.frame(mean = tmp_means,category = names(group_counts), n_pathogens = n)
+      
+      results_list[[result_idx]] <- tmp_comb
+      result_idx <- result_idx + 1
+    }
+    
+    setTxtProgressBar(pb, i)
+  }
+  
+  close(pb)
+  
+  # Combine list into data.frame
+  output <- do.call(rbind, results_list)
+  output <- as.data.frame(output)
+  
+  return(output)
+}
+
+plot_n_pathogens <- function(metadata, status, n_iter) {
+  co_prom_metadata <- metadata[,co_prom] %>% select(which(.["category", ] == status))
+  hg_prom_metadata <- metadata[,hg_prom] %>% select(which(.["category", ] == status))
+  ww_prom_metadata <- metadata[,ww_prom] %>% select(which(.["category", ] == status))
+  non_prom_metadata <- metadata[,non_prom] %>% select(which(.["category", ] == status))
+  
+  plot_data <- data.frame(n_pathogens = rep(0:max(as.numeric(metadata["n_pathogens", metadata["category",] == status])), 4),
+                          value = NA)
+  
+  n_subsample <- min(ncol(co_prom_metadata), ncol(hg_prom_metadata), ncol(ww_prom_metadata), ncol(non_prom_metadata))
+  
+  
+  for (n in unique(plot_data$n_pathogens)) {
+    prop_co_prom <- c()
+    
+    for (i in 1:n_iter) {
+      subsample_co_prom <- co_prom_metadata[,sample(colnames(co_prom_metadata), n_subsample, replace=FALSE)]
+      subsample_hg_prom <- hg_prom_metadata[,sample(colnames(hg_prom_metadata), n_subsample, replace=FALSE)]
+      subsample_ww_prom <- ww_prom_metadata[,sample(colnames(ww_prom_metadata), n_subsample, replace=FALSE)]
+      subsample_non_prom <- non_prom_metadata[,sample(colnames(non_prom_metadata), n_subsample, replace=FALSE)]
+      
+      if (status == "Established") {
+        subsample_comb <- cbind(subsample_co_prom, subsample_hg_prom, subsample_ww_prom, subsample_non_prom)
+      }
+      else if (status == "Latent") {
+        subsample_comb <- cbind(subsample_hg_prom, subsample_ww_prom, subsample_non_prom)
+      }
+      
+      n_args <- sum(as.numeric(subsample_comb["n_pathogens",]) >= n)
+      
+      if (n_args == 0) {
+        next
+      }
+      
+      else {
+        prop_co_prom <- c(prop_co_prom, sum(as.numeric(subsample_co_prom["n_pathogens",]) >= n)/n_args)
+      }
+    }
+    
+    plot_data$value[plot_data$n_pathogens == n] <- mean(prop_co_prom)
+  }
+  
+  print("Performing permutation analysis")
+  permutation_df <- cbind(co_prom_metadata, 
+                          hg_prom_metadata, 
+                          ww_prom_metadata, 
+                          non_prom_metadata) %>% 
+    t() %>% 
+    as.data.frame()
+  
+  permutation_df$grp <- c(rep("Co-promoted", ncol(co_prom_metadata)), 
+                          rep("HG-promoted", ncol(hg_prom_metadata)), 
+                          rep("WW-promoted", ncol(ww_prom_metadata)), 
+                          rep("Non-promoted", ncol(non_prom_metadata)))
+  
+  permutation_results <- perform_permutation(permutation_df, n_iter, n_subsample)
+  permutation_results <- permutation_results[permutation_results$category == "Co-promoted",]
+  
+  plot_data_permutation <- data.frame(mean = NA, sd = NA, n_pathogens = unique(permutation_results$n_pathogens))
+  
+  for (n in permutation_results$n_pathogens) {
+    plot_data_permutation$mean[plot_data_permutation$n_pathogens == n] <- mean(permutation_results$mean[permutation_results$n_pathogens == n])
+    plot_data_permutation$sd[plot_data_permutation$n_pathogens == n] <- sd(permutation_results$mean[permutation_results$n_pathogens == n])
+  }
+  
+  p <- ggplot() +
+    geom_line(data=plot_data, 
+              aes(x = n_pathogens, y = value), 
+              linewidth=1, 
+              color = "#000000") +
+    geom_ribbon(data = plot_data_permutation, 
+                aes(x = n_pathogens,
+                    ymin = mean - sd,
+                    ymax = mean + sd),
+                fill = "#636363", alpha = 0.2) +
+    geom_line(data = plot_data_permutation,
+              aes(x = n_pathogens, y = mean),
+              color = "#636363", linewidth = 1, linetype = "dashed") +
+    theme_minimal() +
+    scale_x_continuous(breaks = 0:15) +
+    scale_y_continuous(labels = percent) +
+    ylab("Proportion") +
+    xlab(expression("Number of Pathogens (" >= ")")) +
+    theme(axis.text.x=element_text(size = rel(1.5)),
+          axis.text.y=element_text(size = rel(1.3)),
+          axis.title=element_text(size=rel(1.3)),
+          legend.title=element_text(size=rel(1.2)), 
+          legend.text=element_text(size=rel(1)),
+          plot.tag = element_text(size=rel(2.5), face = "bold"),
+          plot.title = element_text(size = rel(1.5)))
+  
+  return(p)
+}
+
+fig_s5 <- plot_n_pathogens(metadata, "Established", 1000)
+
+pdf("figure_s5.pdf", height = 6, width = 8)
+plot(fig_s5)
 dev.off()
 
 #----------------- FIGURE S5a -------------------------------------------------
@@ -1373,7 +1780,7 @@ plot_data <- rbind(gcomp_co_prom,
                    gcomp_ww_prom,
                    gcomp_non_prom)
 
-fig_s5a <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category, levels = c("Co-promoted (n=41)", "HG-promoted (n=42)", "WW-promoted (n=20)", "Non-promoted (n=229)")))) +
+fig_s6a <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category, levels = c("Co-promoted (n=41)", "HG-promoted (n=42)", "WW-promoted (n=20)", "Non-promoted (n=229)")))) +
   geom_boxplot() +
   theme_minimal() +
   labs(x = NULL,
@@ -1382,10 +1789,10 @@ fig_s5a <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category,
        title = "Established",
        fill = NULL) +
   scale_fill_manual(values=c(
-    "Co-promoted (n=41)"='#c26a77',
-    "HG-promoted (n=42)" ="#337538",
-    "WW-promoted (n=20)" = "#2e2585",
-    "Non-promoted (n=229)"="#dccd7d"
+    "Co-promoted (n=41)"='#000000',
+    "HG-promoted (n=42)" ="#D55E00",
+    "WW-promoted (n=20)" = "#0072B2",
+    "Non-promoted (n=229)"="#F0E442"
   ), name = "") +
   theme(axis.text.x=element_text(size = rel(1.3), angle = 45, vjust = 1, hjust = 1, face = "italic"),
         axis.text.y=element_text(size = rel(1.3)),
@@ -1436,7 +1843,7 @@ plot_data <- rbind(gcomp_hg_prom,
                    gcomp_ww_prom,
                    gcomp_non_prom)
 
-fig_s5b <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category, levels = c("HG-promoted (n=70)", "WW-promoted (n=28)", "Non-promoted (n=1159)")))) +
+fig_s6b <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category, levels = c("HG-promoted (n=70)", "WW-promoted (n=28)", "Non-promoted (n=1159)")))) +
   geom_boxplot() +
   theme_minimal() +
   labs(x = NULL,
@@ -1445,9 +1852,9 @@ fig_s5b <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category,
        title = "Latent",
        fill = NULL) +
   scale_fill_manual(values=c(
-    "HG-promoted (n=70)" ="#337538",
-    "WW-promoted (n=28)" = "#2e2585",
-    "Non-promoted (n=1159)"="#dccd7d"
+    "HG-promoted (n=70)" ="#D55E00",
+    "WW-promoted (n=28)" = "#0072B2",
+    "Non-promoted (n=1159)"="#F0E442"
   ), name = "") +
   theme(axis.text.x=element_text(size = rel(1.3), angle = 45, vjust = 1, hjust = 1, face = "italic"),
         axis.text.y=element_text(size = rel(1.3)),
@@ -1489,62 +1896,149 @@ test_results <- data.frame(x = test_data$x,
                            p_value = pval)
 
 
-pdf("figure_s5.pdf", height = 14, width = 12)
-fig_s5a /
-  fig_s5b
+pdf("figure_s6.pdf", height = 14, width = 12)
+fig_s6a /
+  fig_s6b
 dev.off()
 
 #----------------- FIGURE S6 --------------------------------------------------
-library(tidyr)
-library(viridis)
 
-correlations <- data.frame(grp = c("co_prom", "hg_prom", "ww_prom", "non_prom"), 
-                           hg = rep(NA, 4),
-                           pval_hg = rep(NA, 4),
-                           ww = rep(NA, 4),
-                           pval_ww = rep(NA, 4))
-
-for (i in 1:nrow(correlations)) {
-  correlations[i,2] <- cor.test(rel_ab_hm[get(correlations$grp[i])], mean_ab_hm[get(correlations$grp[i])], method = "spearman")$estimate
-  correlations[i,3] <- cor.test(rel_ab_hm[get(correlations$grp[i])], mean_ab_hm[get(correlations$grp[i])], method = "spearman")$p.value
-  correlations[i,4] <- cor.test(rel_ab_ww[get(correlations$grp[i])], mean_ab_ww[get(correlations$grp[i])], method = "spearman")$estimate
-  correlations[i,5] <- cor.test(rel_ab_ww[get(correlations$grp[i])], mean_ab_ww[get(correlations$grp[i])], method = "spearman")$p.value
+read_genetic_compatibility <- function(filename, status, category) {
+  df <- data.frame(fread(filename)) %>% 
+    tibble::column_to_rownames('X0') 
+  
+  status_ids <- metadata[, colnames(df)] %>% 
+    select(which(.["category", ] == status)) %>%
+    colnames()
+  
+  df <- df[,status_ids]
+  
+  value <- c()
+  species <- c()
+  for (sp in rownames(df)) {
+    value <- c(value, as.numeric(df[sp,]))
+    species <- c(species, rep(sp, ncol(df)))
+  }
+  
+  output <- data.frame(Value = value, 
+                       Species = species, 
+                       Category = paste(c(category, " (n=", ncol(df), ")"), collapse=""))
+  
+  output$Species <- sub(" .*", "", output$Species)
+  
+  return(output)
 }
 
-correlations$grp <- c(paste(c("Co-promoted\n(n=", length(co_prom), ")"), collapse=""),
-                      paste(c("HG-promoted\n(n=", length(hg_prom), ")"), collapse=""),
-                      paste(c("WW-promoted\n(n=", length(ww_prom), ")"), collapse=""),
-                      paste(c("Non-promoted\n(n=", length(non_prom), ")"), collapse=""))
+plot_gcomp <- function(categ, title, tag) {
+  gcomp_co_prom <- read_genetic_compatibility(paste(c("gcomp_co_promoted_", categ, ".txt"), collapse = ""), "Established", "Co-promoted")
+  gcomp_hg_prom <- read_genetic_compatibility(paste(c("gcomp_hg_promoted_", categ, ".txt"), collapse = ""), "Established", "HG-promoted")
+  gcomp_ww_prom <- read_genetic_compatibility(paste(c("gcomp_ww_promoted_", categ, ".txt"), collapse = ""), "Established", "WW-promoted")
+  gcomp_non_prom <- read_genetic_compatibility(paste(c("gcomp_non_promoted_", categ, ".txt"), collapse = ""), "Established", "Non-promoted")
+  
+  plot_data <- rbind(gcomp_co_prom, gcomp_hg_prom, gcomp_ww_prom, gcomp_non_prom)
+  
+  p <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category, levels = c("Co-promoted (n=41)", "HG-promoted (n=42)", "WW-promoted (n=20)", "Non-promoted (n=229)")))) +
+    geom_boxplot() +
+    theme_minimal() +
+    ylim(c(0.02, 0.09)) +
+    labs(x = NULL,
+         y = "Gene-genome 5mer distance",
+         tag = tag,
+         title = title,
+         fill = NULL) +
+    scale_fill_manual(values=c(
+      "Co-promoted (n=41)"='#000000',
+      "HG-promoted (n=42)" ="#D55E00",
+      "WW-promoted (n=20)" = "#0072B2",
+      "Non-promoted (n=229)"="#F0E442"
+    ), name = "") +
+    theme(axis.text.x=element_text(size = rel(1.3), angle = 45, vjust = 1, hjust = 1, face = "italic"),
+          axis.text.y=element_text(size = rel(1.3)),
+          axis.title=element_text(size=rel(1.3)),
+          legend.title=element_text(size=rel(1.2)), 
+          legend.text=element_text(size=rel(1)),
+          plot.tag = element_text(size=rel(2.5), face = "bold"),
+          plot.title = element_text(size = rel(2)),
+          plot.margin = ggplot2::margin(t = 10,
+                                        r = 10,
+                                        b = 10,
+                                        l = 60))
+  
+  return(p)
+}
 
-colnames(correlations) <- c("grp", "Human gut", "Wastewater")
 
-correlations_long <- correlations %>%
-  pivot_longer(cols = -grp, names_to = "variable", values_to = "value")
+fig_s7a <- plot_gcomp("a-f", "Abundant bacterial genera: A-F", "a")
+fig_s7b <- plot_gcomp("g-p", "Abundant bacterial genera: G-P", "b")
+fig_s7c <- plot_gcomp("r-z", "Abundant bacterial genera: R-Z", "c")
 
-fig_s6 <- ggplot(correlations_long, aes(x = variable, 
-                                        y = factor(grp, levels =  rev(c(paste(c("Co-promoted\n(n=", length(co_prom), ")"), collapse=""),
-                                                                        paste(c("HG-promoted\n(n=", length(hg_prom), ")"), collapse=""),
-                                                                        paste(c("WW-promoted\n(n=", length(ww_prom), ")"), collapse=""),
-                                                                        paste(c("Non-promoted\n(n=", length(non_prom), ")"), collapse="")))), 
-                                        fill = value)) +
-  geom_tile(color = "white") + 
-  geom_text(aes(label = round(value, 2))) +
-  scale_fill_viridis(option = "inferno", name = "Correlation", limits=c(0,1)) + 
+pdf("figure_s7.pdf", width=20, height = 20)
+fig_s7a /
+  fig_s7b /
+  fig_s7c
+dev.off()
+
+#----------------- FIGURE S8 --------------------------------------------------
+
+read_genetic_compatibility <- function(filename, rel_ab, status, category) {
+  df <- data.frame(fread(filename)) %>% 
+    tibble::column_to_rownames('X0') 
+  
+  status_ids <- metadata[, colnames(df)] %>% 
+    select(which(.["category", ] == status)) %>%
+    colnames()
+  
+  df <- df[,status_ids]
+  prevalence <- rel_ab[status_ids]
+  
+  genus <- unique(sub(" .*", "", rownames(df)))
+  
+  tmp <- as.data.frame(matrix(nrow = length(genus), ncol = ncol(df)))
+  colnames(tmp) <- colnames(df)
+  rownames(tmp) <- genus
+  
+  for (g in genus) {
+    tmp[g,] <- apply(df[sub(" .*", "", rownames(df)) == g,], 2, median)
+    
+  }
+  
+  output <- data.frame(comp = apply(tmp, 2, mean), 
+                       prevalence = prevalence,
+                       category = category)
+  
+  return(output)
+}
+
+counts <- rbind(data_hm, data_ww)
+rel_ab <- colSums(counts >= 3)/nrow(counts)
+
+gcomp_co_prom <- read_genetic_compatibility("genus_gcomp_co_promoted.tsv", rel_ab, "Established", "Co-promoted")
+gcomp_hg_prom <- read_genetic_compatibility("genus_gcomp_hg_promoted.tsv", rel_ab, "Established", "HG-promoted")
+gcomp_ww_prom <- read_genetic_compatibility("genus_gcomp_ww_promoted.tsv", rel_ab, "Established", "WW-promoted")
+gcomp_non_prom <- read_genetic_compatibility("genus_gcomp_non_promoted.tsv", rel_ab, "Established", "Non-promoted")
+
+cor_table <- rbind(gcomp_co_prom, gcomp_hg_prom, gcomp_ww_prom, gcomp_non_prom)
+cor.test(cor_table$comp, cor_table$prevalence, method = "spearman")
+
+fig_s8 <- ggplot(data=cor_table, aes(x=comp, y = prevalence, color=factor(category, levels = c("Co-promoted", "HG-promoted", "WW-promoted", "Non-promoted")))) +
+  annotate("segment", x=min(cor_table$comp)*0.95, xend=max(cor_table$comp)*1.05, y=min(cor_table$prevalence), yend=min(cor_table$prevalence),
+           arrow=arrow(length=unit(0.3, "cm"), type="closed")) + 
+  annotate("segment", x=min(cor_table$comp)*0.95, xend=min(cor_table$comp)*0.95, y=min(cor_table$prevalence), yend=max(cor_table$prevalence)*1.05,
+           arrow=arrow(length=unit(0.3, "cm"), type="closed")) +
+  geom_point(size=3) +
+  ylab("Prevalence in metagenomes") +
+  xlab("Genetic incompatibility with resident bacteria\n(distance between 5mer distributions)") +
   theme_minimal() +
-  labs(
-    title = "",
-    x = "",
-    y = ""
-  ) +
-  theme_minimal()+
+  scale_y_continuous(labels = percent) +
+  scale_color_manual(values=arg_category_palette, name = "") +
   theme(axis.text.x=element_text(size = rel(1.3)),
         axis.text.y=element_text(size = rel(1.3)),
         axis.title=element_text(size=rel(1.3)),
         legend.title=element_text(size=rel(1.2)), 
-        legend.text=element_text(size=rel(1)),
-        plot.title = element_text(size = rel(3), face = "bold"))
+        legend.text=element_text(size=rel(1.2)),
+        plot.tag = element_text(size=rel(2.5), face = "bold"),
+        plot.title = element_text(size = rel(1.5))) 
 
-
-pdf("figure_s6.pdf", height = 4, width = 6)
-plot(fig_s6)
+pdf("figure_s8.pdf", height = 7, width = 9.5)
+plot(fig_s8)
 dev.off()
