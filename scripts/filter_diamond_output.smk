@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import random
 
-directories, files = glob_wildcards('{dir}/{file}.tsv')
+directories, files = glob_wildcards('example_data/{dir}/{file}.tsv')
 
 def prefilter_data(filename):
     cols = ['qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore', 'qlen']
@@ -39,14 +39,14 @@ def select_best_hit(query_id, dataframe):
 
 rule all:
     input:
-        expand('tmp/{dir}/{file}_filtered.txt',
+        expand('example_data/{dir}/filtered/{file}_filtered.txt',
         zip, dir=directories, file=files)
 
 rule filter:
     input:
-        '{dir}/{file}.tsv'
+        'example_data/{dir}/{file}.tsv'
     output:
-        'tmp/{dir}/{file}_filtered.txt'
+        'example_data/{dir}/filtered/{file}_filtered.txt'
     run:
         df = prefilter_data(input[0])
         query_ids = pd.DataFrame({'id': df.iloc[:,0].unique()})
