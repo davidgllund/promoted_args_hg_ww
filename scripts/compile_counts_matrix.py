@@ -1,11 +1,28 @@
 #!/usr/bin/env python
 import pandas as pd
+import argparse
+from sys import argv
+from tqdm import tqdm
+
+def parse_args(argv):
+    desc = 'Creates counts matrix from DIAMOND output files.'
+    parser = argparse.ArgumentParser(description=desc+'. ')
+    parser.add_argument('--files', required=True,
+                        help='List of paths to DIAMOND output files.')
+    parser.add_argument('--ids', required=True,
+                        help='List of genes to include.')
+    parser.add_argument('--output', '-o', required=True,
+                        help='Name of output file.')
+
+    arguments = parser.parse_args()
+
+    return arguments
 
 def compile_counts(paths, ids):
     counts_total = []
     new_index = []
 
-    for i in range(len(paths)):
+    for i in tqdm(range(len(paths)), desc = 'Compiling counts matrix'):
         df = pd.read_csv(paths.iloc[i,0], sep='\t')
 
         if (len(df) == 0):
@@ -22,7 +39,6 @@ def compile_counts(paths, ids):
 
             counts_total.append(sample_counts)
             new_index.append(list(paths.index)[i])
-            print(i)
 
     counts_compiled = pd.DataFrame(data=counts_total)
     counts_compiled.columns = ids
@@ -31,13 +47,14 @@ def compile_counts(paths, ids):
     return counts_compiled
 
 def main():
-    paths = pd.read_csv('sample_paths.tsv', sep='\t', index_col=0, header=None)
-    
-    with open('../arg_ids.txt', 'r') as f:
+    arguments = parse_args(argv)
+    paths = pd.read_csv(arguments.files, sep='\t', index_col=0, header=None)
+
+    with open(arguments.ids, 'r') as f:
         ids = [x.strip() for x  in f.readlines()]
 
     counts_compiled = compile_counts(paths, ids)    
-    counts_compiled.to_csv('counts_compiled.tsv', sep='\t', header=True, index=True)
+    counts_compiled.to_csv(arguments.output, sep='\t', header=True, index=True)
 
 if __name__ == '__main__':
     main()
