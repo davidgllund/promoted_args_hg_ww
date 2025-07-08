@@ -181,7 +181,7 @@ def main():
     arguments = parse_args(argv)
     counts = pd.read_csv(arguments.input, sep='\t', index_col=0)
     
-    arg_index, established_index, taxonomy_map, species_index = read_dictionaries(counts, arguments.cluster_dir, arguments.arg_index, arguments.blastout, arguments.taxonomy_ncbi, arguments.taxonomy_card)
+    arg_index, established_index, taxonomy_map, species_index = read_dictionaries(counts, arguments.arg_index, arguments.blastout, arguments.cluster_dir, arguments.taxonomy_ncbi, arguments.taxonomy_card)
     
     with open(arguments.pathogens, 'r') as f:
         pathogen_index = [x.strip() for x in f.readlines()]

@@ -66,8 +66,7 @@ def main():
     counts_compiled = subset_counts_matrix(arguments.input, arguments.subset)
     counts_compiled = add_non_arg_reads(counts_compiled, arguments.n_reads)
 
-    print('Rarefying data')
-    rarefied = [rarefy(key, counts_compiled, 5000000) for key in tqdm(counts_compiled.index)]
+    rarefied = [rarefy(key, counts_compiled, 5000000) for key in tqdm(counts_compiled.index, desc='Rarefying data')]
     rarefied_counts = pd.DataFrame(data=rarefied, columns=counts_compiled.columns, index=counts_compiled.index)
     rarefied_counts = rarefied_counts.drop('non-ARG', axis=1)
     rarefied_counts.to_csv(arguments.output, sep='\t', header=True, index=True)
