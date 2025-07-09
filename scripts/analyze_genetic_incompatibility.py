@@ -8,9 +8,8 @@ import math
 import argparse
 
 def parse_args(argv):
-    desc = 'Compile info about co-localized mobile genetic elements'
-    copyright = 'Copyright (c) David Lund 2024.'
-    parser = argparse.ArgumentParser(description=desc+'. '+copyright)
+    desc = 'Analyze genetic incompatibility between genes and genomes.'
+    parser = argparse.ArgumentParser(description=desc+'. ')
     parser.add_argument('--input', '-i', required=True,
                         help='Fasta file containing genes to analyze.')
     parser.add_argument('--genome_kmers', required=True,
