@@ -31,5 +31,10 @@ rm -r tmp
 
 # Compile ARG metadata
 python scripts/compile_arg_metadata.py --input rarefied_counts_hg.tsv --pathogens auxiliary_files/pathogen_list.txt --arg_index auxiliary_files/arg_index.txt --blastout auxiliary_files/blastout_established.tsv --cluster_dir example_data/clusters --taxonomy_ncbi auxiliary_files/genome_full_lineage.tsv --taxonomy_card auxiliary_files/card_taxonomy.txt --output arg_metadata.tsv
+
+# Get bacterial host distributions
 python scripts/get_phylum_distribution.py --input rarefied_counts_hg.tsv --cluster_dir example_data/clusters --taxonomy_ncbi auxiliary_files/genome_full_lineage.tsv --taxonomy_card auxiliary_files/card_taxonomy.txt --output arg_phylum_distribution.tsv
 python scripts/get_pathogen_distribution.py --input rarefied_counts_hg.tsv --pathogens auxiliary_files/pathogen_list.txt --cluster_dir example_data/clusters --taxonomy_ncbi auxiliary_files/genome_full_lineage.tsv --taxonomy_card auxiliary_files/card_taxonomy.txt --output arg_pathogen_distribution.tsv
+
+# Compute genetic compatibility
+python scripts/analyze_genetic_incompatibility.py --input example_data/predicted_args.fna --genome_kmers auxiliary_files/genome_kmers_subset.tsv --pathogens auxiliary_files/selected_genomes_pathogens.tsv --output genetic_compatibility.txt
