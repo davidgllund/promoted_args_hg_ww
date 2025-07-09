@@ -50,7 +50,7 @@ Below is a step-by-step guide on how to run the scripts in this repository. Plea
   
 4. To generate the main and supplementary figures from the paper, use the following command:
    ```
-    Rscripts scripts/plots_for_paper.R
+    Rscript scripts/plots_for_paper.R
     ```
 
    This will produce a total of 14 files, each named "figure_X.pdf" or "figure_sX.pdf", where X is the corresponding figure number.
