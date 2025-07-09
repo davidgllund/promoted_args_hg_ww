@@ -1,5 +1,4 @@
 #----------------- GENERAL PREPARATIONS ---------------------------------------
-# Load packages
 library(data.table)
 library(ggplot2)
 library(dplyr)
@@ -10,6 +9,9 @@ library(GGally)
 library(ggpp)
 library(tidyr)
 library(tibble)
+
+# Unpack plot_data
+system("if [[ ! -d plot_data ]]; then tar -xf plot_data.tar.gz; fi")
 
 aggregate_mechanism <- function(classes) {
   mechanism <- rep(NA, times = length(classes))
@@ -27,7 +29,7 @@ aggregate_mechanism <- function(classes) {
   return(mechanism)
 }
 
-metadata <- data.frame(fread("arg_metadata.tsv", header=TRUE)) %>% 
+metadata <- data.frame(fread("plot_data/arg_metadata.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 
 metadata[is.na(metadata)] <- 0
@@ -37,11 +39,11 @@ metadata["taxonomy_score", metadata["taxonomy_score",] == "4"] <- "Order"
 metadata["taxonomy_score", metadata["taxonomy_score",] == "5"] <- "Class"
 metadata["taxonomy_score", metadata["taxonomy_score",] == "6"] <- "Phylum"
 
-data_ww <- data.frame(fread("rarefied_counts_wastewater.tsv", header=TRUE)) %>% 
+data_ww <- data.frame(fread("plot_data/rarefied_counts_ww.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 data_ww <- data_ww[,metadata["arg_class",] != "mcr"]
 
-data_hm <- data.frame(fread("rarefied_counts_human.tsv", header=TRUE)) %>% 
+data_hm <- data.frame(fread("plot_data/rarefied_counts_hg.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1') 
 data_hm <- data_hm[,metadata["arg_class",] != "mcr"]
 
@@ -205,7 +207,7 @@ fig_2b <- ggplot(plot_data, aes(fill=mechanism, y=value, x=factor(category, leve
 
 #----------------- FIGURE 2c --------------------------------------------------
 
-ph_metadata <- data.frame(fread("arg_phylum_distr.tsv", header=TRUE)) %>% na.omit()
+ph_metadata <- data.frame(fread("plot_data/arg_phylum_distribution.tsv", header=TRUE)) %>% na.omit()
 rownames(ph_metadata) <- ph_metadata$V1
 ph_metadata <- ph_metadata[,-1]
 
@@ -267,7 +269,6 @@ dev.off()
 #----------------- FIGURE 3a-b ------------------------------------------------
 
 perform_permutation <- function(df, n_iter, n_subsample) {
-  # Pre-allocate list to collect results
   results_list <- vector("list", length = n_iter * length(unique(df$taxonomy_score)))
   
   pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
@@ -277,13 +278,12 @@ perform_permutation <- function(df, n_iter, n_subsample) {
   result_idx <- 1
   
   for (i in seq_len(n_iter)) {
-    df$grp <- sample(df$grp)  # scramble groups once per iteration
+    df$grp <- sample(df$grp)
     
     for (score in taxonomy_scores) {
-      tmp_mat <- matrix(0, nrow = n_iter, ncol = 4)  # preallocate temporary results
+      tmp_mat <- matrix(0, nrow = n_iter, ncol = 4)
       
       for (j in seq_len(n_iter)) {
-        # Sample once per group
         subsample_indices <- unlist(
           lapply(group_levels, function(g) {
             sample(which(df$grp == g), n_subsample, replace = FALSE)
@@ -297,7 +297,6 @@ perform_permutation <- function(df, n_iter, n_subsample) {
           next
         }
         
-        # Calculate fraction of each group matching score
         group_counts <- sapply(group_levels, function(g) {
           sum(subsample$taxonomy_score[subsample$grp == g] == score)
         })
@@ -305,7 +304,6 @@ perform_permutation <- function(df, n_iter, n_subsample) {
         tmp_mat[j, ] <- group_counts / n_args
       }
       
-      # Take column means and store result
       tmp_means <- colMeans(tmp_mat, na.rm = TRUE)
       results_list[[result_idx]] <- c(tmp_means, score)
       result_idx <- result_idx + 1
@@ -316,7 +314,6 @@ perform_permutation <- function(df, n_iter, n_subsample) {
   
   close(pb)
   
-  # Combine list into data.frame
   output <- do.call(rbind, results_list)
   colnames(output) <- c("co_prom", "hg_prom", "ww_prom", "non_prom", "score")
   
@@ -525,7 +522,7 @@ plot_phylum_combinations <- function(gene_ids, df, title, tag) {
   return(p)
 }
 
-ph_metadata <- data.frame(fread("arg_phylum_distr.tsv", header=TRUE)) %>% na.omit()
+ph_metadata <- data.frame(fread("plot_data/arg_phylum_distribution.tsv", header=TRUE)) %>% na.omit()
 rownames(ph_metadata) <- ph_metadata$V1
 ph_metadata <- ph_metadata[,-1]
 
@@ -578,16 +575,16 @@ read_mges <- function(filename, gene_ids, metadata, mge_type, arg_type, status) 
   return(output)
 }
 
-mge_type <- data.frame(fread("co_prom_mges.tsv")) %>% 
+mge_type <- data.frame(fread("plot_data/mges_co_promoted.tsv")) %>% 
   tibble::column_to_rownames('V1') %>%
   select(subset = ncol(.))
 
-arg_type <- data.frame(fread("arg_types.tsv", header=FALSE))
+arg_type <- data.frame(fread("plot_data/arg_types.tsv", header=FALSE))
 
-est_co_prom_mge <- read_mges("co_prom_mges.tsv", co_prom, metadata, mge_type, arg_type, "Established")
-est_hg_prom_mge <- read_mges("hg_prom_mges.tsv", hg_prom, metadata, mge_type, arg_type, "Established")
-est_ww_prom_mge <- read_mges("ww_prom_mges.tsv", ww_prom, metadata, mge_type, arg_type, "Established")
-est_non_prom_mge <- read_mges("non_prom_mges.tsv", non_prom, metadata, mge_type, arg_type, "Established")
+est_co_prom_mge <- read_mges("plot_data/mges_co_promoted.tsv", co_prom, metadata, mge_type, arg_type, "Established")
+est_hg_prom_mge <- read_mges("plot_data/mges_hg_promoted.tsv", hg_prom, metadata, mge_type, arg_type, "Established")
+est_ww_prom_mge <- read_mges("plot_data/mges_ww_promoted.tsv", ww_prom, metadata, mge_type, arg_type, "Established")
+est_non_prom_mge <- read_mges("plot_data/mges_non_promoted.tsv", non_prom, metadata, mge_type, arg_type, "Established")
 
 mge_type <- mge_type[mge_type$subset != "is",]
 
@@ -780,10 +777,10 @@ fig_5b <- plot_n_pathogens(metadata, "Latent", 1000, "b")
 
 #----------------- FIGURE 5c-f ------------------------------------------------
 
-pathogen_data <- data.frame(fread("arg_pathogen_distr.tsv", header=TRUE)) %>% 
+pathogen_data <- data.frame(fread("plot_data/arg_pathogen_distribution.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 
-taxonomy <- data.frame(fread("../../HGT inference project/R files/assembly_id_w_full_taxonomy.txt", header=FALSE)) %>%
+taxonomy <- data.frame(fread("auxiliary_files/genome_full_lineage.tsv", header=FALSE)) %>%
   select(-1) %>% unique() %>% na.omit()
 rownames(taxonomy) <- taxonomy$V8
 taxonomy <- taxonomy[rownames(pathogen_data),]
@@ -877,13 +874,13 @@ compile_pathogen_comp <- function(filename, gene_ids, pathogen_data, category, s
   
 }
 
-pathogen_data <- data.frame(fread("arg_pathogen_distr.tsv", header=TRUE)) %>% 
+pathogen_data <- data.frame(fread("plot_data/arg_pathogen_distribution.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 
-df_co_prom <- compile_pathogen_comp("gcomp_co_prom.tsv", co_prom, pathogen_data, "Co-promoted", "Established")
-df_hg_prom <- compile_pathogen_comp("gcomp_hg_prom.tsv", hg_prom, pathogen_data, "HG-promoted", "Established")
-df_ww_prom <- compile_pathogen_comp("gcomp_ww_prom.tsv", ww_prom, pathogen_data, "WW-promoted", "Established")
-df_non_prom <- compile_pathogen_comp("gcomp_non_prom.tsv", non_prom, pathogen_data, "Non-promoted", "Established")
+df_co_prom <- compile_pathogen_comp("plot_data/genetic_compatibility_co_promoted.tsv", co_prom, pathogen_data, "Co-promoted", "Established")
+df_hg_prom <- compile_pathogen_comp("plot_data/genetic_compatibility_hg_promoted.tsv", hg_prom, pathogen_data, "HG-promoted", "Established")
+df_ww_prom <- compile_pathogen_comp("plot_data/genetic_compatibility_ww_promoted.tsv", ww_prom, pathogen_data, "WW-promoted", "Established")
+df_non_prom <- compile_pathogen_comp("plot_data/genetic_compatibility_non_promoted.tsv", non_prom, pathogen_data, "Non-promoted", "Established")
 
 plot_data <- rbind(df_co_prom, df_hg_prom, df_ww_prom, df_non_prom)
 
@@ -929,11 +926,11 @@ dev.off()
 
 #----------------- FIGURE S1a-b -----------------------------------------------
 
-norm_data_hm <- data.frame(fread("normalized_counts_human.tsv", header=TRUE)) %>% 
+norm_data_hm <- data.frame(fread("plot_data/normalized_counts_hg.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 norm_data_hm[norm_data_hm == 0] <- NA
 
-norm_data_ww <- data.frame(fread("normalized_counts_wastewater.tsv", header=TRUE)) %>% 
+norm_data_ww <- data.frame(fread("plot_data/normalized_counts_ww.tsv", header=TRUE)) %>% 
   tibble::column_to_rownames('V1')
 norm_data_ww[norm_data_ww == 0] <- NA
 
@@ -1209,12 +1206,10 @@ do_fisher_test <- function(df) {
   
   categories <- colnames(contingency)
   
-  # Safe pairwise Fisher test with proper error handling
   pairwise_results <- combn(categories, 2, function(pair) {
     sub_table <- contingency[, pair, drop = FALSE]
     sub_table <- sub_table[rowSums(sub_table) > 0, , drop = FALSE]
     
-    # Must be at least 2 rows and 2 columns
     if (nrow(sub_table) < 2 || ncol(sub_table) != 2) {
       return(data.frame(cat1 = pair[1], cat2 = pair[2], p_value = NA, method = "skipped"))
     }
@@ -1224,7 +1219,6 @@ do_fisher_test <- function(df) {
       return(data.frame(cat1 = pair[1], cat2 = pair[2], p_value = NA, method = "invalid"))
     }
     
-    # Try Fisher test
     test <- tryCatch({
       fisher.test(mat)
     }, error = function(e) {
@@ -1242,23 +1236,23 @@ do_fisher_test <- function(df) {
   print(results_df)
 }
 
-mge_type <- data.frame(fread("co_prom_mges.tsv")) %>% 
+mge_type <- data.frame(fread("plot_data/mges_co_promoted.tsv")) %>% 
   tibble::column_to_rownames('V1') %>%
   select(subset = ncol(.))
 
-arg_type <- data.frame(fread("arg_types.tsv", header=FALSE))
+arg_type <- data.frame(fread("plot_data/arg_types.tsv", header=FALSE))
 
-est_co_prom_mge <- read_mges("co_prom_mges.tsv", co_prom, metadata, mge_type, arg_type, "Established")
-lat_co_prom_mge <- read_mges("co_prom_mges.tsv", co_prom, metadata, mge_type, arg_type, "Latent")
+est_co_prom_mge <- read_mges("plot_data/mges_co_promoted.tsv", co_prom, metadata, mge_type, arg_type, "Established")
+lat_co_prom_mge <- read_mges("plot_data/mges_co_promoted.tsv", co_prom, metadata, mge_type, arg_type, "Latent")
 
-est_hg_prom_mge <- read_mges("hg_prom_mges.tsv", hg_prom, metadata, mge_type, arg_type, "Established")
-lat_hg_prom_mge <- read_mges("hg_prom_mges.tsv", hg_prom, metadata, mge_type, arg_type, "Latent")
+est_hg_prom_mge <- read_mges("plot_data/mges_hg_promoted.tsv", hg_prom, metadata, mge_type, arg_type, "Established")
+lat_hg_prom_mge <- read_mges("plot_data/mges_hg_promoted.tsv", hg_prom, metadata, mge_type, arg_type, "Latent")
 
-est_ww_prom_mge <- read_mges("ww_prom_mges.tsv", ww_prom, metadata, mge_type, arg_type, "Established")
-lat_ww_prom_mge <- read_mges("ww_prom_mges.tsv", ww_prom, metadata, mge_type, arg_type, "Latent")
+est_ww_prom_mge <- read_mges("plot_data/mges_ww_promoted.tsv", ww_prom, metadata, mge_type, arg_type, "Established")
+lat_ww_prom_mge <- read_mges("plot_data/mges_ww_promoted.tsv", ww_prom, metadata, mge_type, arg_type, "Latent")
 
-est_non_prom_mge <- read_mges("non_prom_mges.tsv", non_prom, metadata, mge_type, arg_type, "Established")
-lat_non_prom_mge <- read_mges("non_prom_mges.tsv", non_prom, metadata, mge_type, arg_type, "Latent")
+est_non_prom_mge <- read_mges("plot_data/mges_non_promoted.tsv", non_prom, metadata, mge_type, arg_type, "Established")
+lat_non_prom_mge <- read_mges("plot_data/mges_non_promoted.tsv", non_prom, metadata, mge_type, arg_type, "Latent")
 
 mge_type <- mge_type[mge_type$subset != "is",]
 
@@ -1584,7 +1578,6 @@ dev.off()
 #----------------- FIGURE S5 --------------------------------------------------
 
 perform_permutation <- function(df, n_iter, n_subsample) {
-  # Pre-allocate list to collect results
   results_list <- vector("list", length = n_iter * length(unique(df$n_pathogens)))
   df$n_pathogens <- as.numeric(df$n_pathogens)
   
@@ -1595,13 +1588,12 @@ perform_permutation <- function(df, n_iter, n_subsample) {
   result_idx <- 1
   
   for (i in seq_len(n_iter)) {
-    df$grp <- sample(df$grp)  # scramble groups once per iteration
+    df$grp <- sample(df$grp)  
     
     for (n in n_pathogens) {
-      tmp_mat <- matrix(0, nrow = n_iter, ncol = 4)  # preallocate temporary results
+      tmp_mat <- matrix(0, nrow = n_iter, ncol = 4) 
       
       for (j in seq_len(n_iter)) {
-        # Sample once per group
         subsample_indices <- unlist(
           lapply(group_levels, function(g) {
             sample(which(df$grp == g), n_subsample, replace = FALSE)
@@ -1615,7 +1607,6 @@ perform_permutation <- function(df, n_iter, n_subsample) {
           next
         }
         
-        # Calculate fraction of each group matching score
         group_counts <- sapply(group_levels, function(g) {
           sum(subsample$n_pathogens[subsample$grp == g] >= n)
         })
@@ -1623,7 +1614,6 @@ perform_permutation <- function(df, n_iter, n_subsample) {
         tmp_mat[j, ] <- group_counts / n_args
       }
       
-      # Take column means and store result
       tmp_means <- colMeans(tmp_mat, na.rm = TRUE)
       tmp_comb <- data.frame(mean = tmp_means,category = names(group_counts), n_pathogens = n)
       
@@ -1636,7 +1626,6 @@ perform_permutation <- function(df, n_iter, n_subsample) {
   
   close(pb)
   
-  # Combine list into data.frame
   output <- do.call(rbind, results_list)
   output <- as.data.frame(output)
   
@@ -1770,10 +1759,10 @@ read_genetic_compatibility <- function(filename, status, category) {
   return(output)
 }
 
-gcomp_co_prom <- read_genetic_compatibility("gcomp_co_prom.tsv", "Established", "Co-promoted")
-gcomp_hg_prom <- read_genetic_compatibility("gcomp_hg_prom.tsv", "Established", "HG-promoted")
-gcomp_ww_prom <- read_genetic_compatibility("gcomp_ww_prom.tsv", "Established", "WW-promoted")
-gcomp_non_prom <- read_genetic_compatibility("gcomp_non_prom.tsv", "Established", "Non-promoted")
+gcomp_co_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_co_promoted.tsv", "Established", "Co-promoted")
+gcomp_hg_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_hg_promoted.tsv", "Established", "HG-promoted")
+gcomp_ww_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_ww_promoted.tsv", "Established", "WW-promoted")
+gcomp_non_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_non_promoted.tsv", "Established", "Non-promoted")
 
 plot_data <- rbind(gcomp_co_prom,
                    gcomp_hg_prom,
@@ -1807,7 +1796,6 @@ fig_s6a <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category,
                                       l = 60))
 
 # Wilcoxon's signed rank test
-
 combinations <- data.frame(crossing(x = unique(plot_data$Category), 
                                     y  = unique(plot_data$Category))) %>%
   filter(x != y)
@@ -1835,9 +1823,9 @@ test_results <- data.frame(x = test_data$x,
 
 #----------------- FIGURE S5b -------------------------------------------------
 
-gcomp_hg_prom <- read_genetic_compatibility("gcomp_hg_prom.tsv", "Latent", "HG-promoted")
-gcomp_ww_prom <- read_genetic_compatibility("gcomp_ww_prom.tsv", "Latent", "WW-promoted")
-gcomp_non_prom <- read_genetic_compatibility("gcomp_non_prom.tsv", "Latent", "Non-promoted")
+gcomp_hg_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_hg_promoted.tsv", "Latent", "HG-promoted")
+gcomp_ww_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_ww_promoted.tsv", "Latent", "WW-promoted")
+gcomp_non_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_non_promoted.tsv", "Latent", "Non-promoted")
 
 plot_data <- rbind(gcomp_hg_prom,
                    gcomp_ww_prom,
@@ -1869,7 +1857,6 @@ fig_s6b <- ggplot(plot_data, aes(x = Species, y = Value, fill = factor(Category,
                                       l = 60))
 
 # Wilcoxon's signed rank test
-
 combinations <- data.frame(crossing(x = unique(plot_data$Category), 
                                     y  = unique(plot_data$Category))) %>%
   filter(x != y)
@@ -1930,10 +1917,10 @@ read_genetic_compatibility <- function(filename, status, category) {
 }
 
 plot_gcomp <- function(categ, title, tag) {
-  gcomp_co_prom <- read_genetic_compatibility(paste(c("gcomp_co_promoted_", categ, ".txt"), collapse = ""), "Established", "Co-promoted")
-  gcomp_hg_prom <- read_genetic_compatibility(paste(c("gcomp_hg_promoted_", categ, ".txt"), collapse = ""), "Established", "HG-promoted")
-  gcomp_ww_prom <- read_genetic_compatibility(paste(c("gcomp_ww_promoted_", categ, ".txt"), collapse = ""), "Established", "WW-promoted")
-  gcomp_non_prom <- read_genetic_compatibility(paste(c("gcomp_non_promoted_", categ, ".txt"), collapse = ""), "Established", "Non-promoted")
+  gcomp_co_prom <- read_genetic_compatibility(paste(c("plot_data/genetic_compatibility_co_promoted_", categ, ".txt"), collapse = ""), "Established", "Co-promoted")
+  gcomp_hg_prom <- read_genetic_compatibility(paste(c("plot_data/genetic_compatibility_hg_promoted_", categ, ".txt"), collapse = ""), "Established", "HG-promoted")
+  gcomp_ww_prom <- read_genetic_compatibility(paste(c("plot_data/genetic_compatibility_ww_promoted_", categ, ".txt"), collapse = ""), "Established", "WW-promoted")
+  gcomp_non_prom <- read_genetic_compatibility(paste(c("plot_data/genetic_compatibility_non_promoted_", categ, ".txt"), collapse = ""), "Established", "Non-promoted")
   
   plot_data <- rbind(gcomp_co_prom, gcomp_hg_prom, gcomp_ww_prom, gcomp_non_prom)
   
@@ -2012,10 +1999,10 @@ read_genetic_compatibility <- function(filename, rel_ab, status, category) {
 counts <- rbind(data_hm, data_ww)
 rel_ab <- colSums(counts >= 3)/nrow(counts)
 
-gcomp_co_prom <- read_genetic_compatibility("genus_gcomp_co_promoted.tsv", rel_ab, "Established", "Co-promoted")
-gcomp_hg_prom <- read_genetic_compatibility("genus_gcomp_hg_promoted.tsv", rel_ab, "Established", "HG-promoted")
-gcomp_ww_prom <- read_genetic_compatibility("genus_gcomp_ww_promoted.tsv", rel_ab, "Established", "WW-promoted")
-gcomp_non_prom <- read_genetic_compatibility("genus_gcomp_non_promoted.tsv", rel_ab, "Established", "Non-promoted")
+gcomp_co_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_co_promoted.tsv", rel_ab, "Established", "Co-promoted")
+gcomp_hg_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_hg_promoted.tsv", rel_ab, "Established", "HG-promoted")
+gcomp_ww_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_ww_promoted.tsv", rel_ab, "Established", "WW-promoted")
+gcomp_non_prom <- read_genetic_compatibility("plot_data/genetic_compatibility_non_promoted.tsv", rel_ab, "Established", "Non-promoted")
 
 cor_table <- rbind(gcomp_co_prom, gcomp_hg_prom, gcomp_ww_prom, gcomp_non_prom)
 cor.test(cor_table$comp, cor_table$prevalence, method = "spearman")
