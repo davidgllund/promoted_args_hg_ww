@@ -17,7 +17,6 @@ To run the scripts in this repository, the following software are required:
     - patchwork >= 1.2.0
     - scales >= 1.3.0
     - tidyverse >= 2.0.0
-- kraken2 >= 2.1.3
 
 A .yml file which can be used to create a conda envioronment with the necessary software installed can be found in /envs.
 
